@@ -15,19 +15,5 @@ This guide provides practical tips and configuration guidance for using **GitHub
 
 ---
 
-## 🛠 VSCode Setup
-
-### Required Extensions
-
-- [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot)
-- [Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python)
-- [Pylance](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-pylance)
-- [FastAPI Snippets (optional)](https://marketplace.visualstudio.com/items?itemName=erikbra.fastapi-snippets)
-
-### Copilot Configuration
-
-Go to `Settings → Extensions → GitHub Copilot`, then:
-
-- ✅ Enable `Copilot: Enable`
-- ✅ Enable `Copilot: Enable Inline Suggestions`
-- Optionally turn on `Copilot Chat` for multi-line suggestions.
+백엔드는 python fastapi로 개발할것이고, 모든 작업은 /backend 폴더에서 작업함
+프론트엔드는 react + javascript로 개발할것이고, 모든 작업은 /frontend 폴더에서 작업함
