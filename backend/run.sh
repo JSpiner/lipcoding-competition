@@ -11,13 +11,17 @@ cd "$(dirname "$0")"
 echo "🚀 Starting Mentor-Mentee Backend API Server..."
 
 # 가상환경 활성화
-echo "📦 Activating virtual environment..."
+echo "📦 Setting up virtual environment..."
 if [ -d "venv" ]; then
+    echo "✅ Virtual environment found"
     source venv/bin/activate
     echo "✅ Virtual environment activated"
 else
-    echo "❌ Virtual environment not found. Please run 'python -m venv venv' first."
-    exit 1
+    echo "⚠️ Virtual environment not found. Creating new virtual environment..."
+    python3 -m venv venv
+    echo "✅ Virtual environment created"
+    source venv/bin/activate
+    echo "✅ Virtual environment activated"
 fi
 
 # 의존성 설치 확인

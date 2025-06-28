@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { profileService } from '../services/profile';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthenticatedImage } from '../hooks/useAuthenticatedImage';
+import MatchRequestModal from '../components/MatchRequestModal';
 import './MentorList.css';
 
 const MentorList = () => {
@@ -16,6 +17,8 @@ const MentorList = () => {
   const [orderBy, setOrderBy] = useState('');
   const [requestingMentorId, setRequestingMentorId] = useState(null);
   const [showAllSkills, setShowAllSkills] = useState(false);
+  const [showMatchRequestModal, setShowMatchRequestModal] = useState(false);
+  const [selectedMentor, setSelectedMentor] = useState(null);
 
   useEffect(() => {
     // 멘티만 접근 가능
@@ -73,36 +76,42 @@ const MentorList = () => {
   };
 
   const handleMatchRequest = async (mentorId) => {
-    try {
-      setRequestingMentorId(mentorId);
-      const message = prompt('매칭 요청 메시지를 입력하세요:');
-      
-      if (message === null) {
-        setRequestingMentorId(null);
-        return; // 사용자가 취소함
-      }
-      
-      if (!message.trim()) {
-        alert('메시지를 입력해주세요.');
-        setRequestingMentorId(null);
-        return;
-      }
+    const mentor = mentors.find(m => m.id === mentorId);
+    if (!mentor) return;
+    
+    setSelectedMentor(mentor);
+    setShowMatchRequestModal(true);
+  };
 
+  const handleMatchRequestSubmit = async (message) => {
+    if (!selectedMentor) return;
+    
+    try {
+      setRequestingMentorId(selectedMentor.id);
+      
       const requestData = {
-        mentorId: mentorId,
+        mentorId: selectedMentor.id,
         menteeId: user.id,
-        message: message.trim()
+        message: message
       };
 
       await profileService.createMatchRequest(requestData);
       setSuccess('매칭 요청이 성공적으로 전송되었습니다!');
       setError('');
+      setShowMatchRequestModal(false);
     } catch (err) {
       setError(err.response?.data?.error || '매칭 요청 전송에 실패했습니다.');
       setSuccess('');
     } finally {
       setRequestingMentorId(null);
+      setSelectedMentor(null);
     }
+  };
+
+  const handleMatchRequestClose = () => {
+    setShowMatchRequestModal(false);
+    setSelectedMentor(null);
+    setRequestingMentorId(null);
   };
 
   if (user?.role !== 'mentee') {
@@ -392,6 +401,15 @@ const MentorList = () => {
           </div>
         )}
       </div>
+
+      {/* 매칭 요청 모달 */}
+      <MatchRequestModal
+        isOpen={showMatchRequestModal}
+        onClose={handleMatchRequestClose}
+        mentor={selectedMentor}
+        onSubmit={handleMatchRequestSubmit}
+        isLoading={requestingMentorId !== null}
+      />
     </div>
   );
 };

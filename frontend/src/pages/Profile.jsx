@@ -63,6 +63,16 @@ const Profile = () => {
                 멘토 찾기
               </Link>
             )}
+            {user.role === 'mentor' && (
+              <Link to="/requests" className="requests-button">
+                받은 요청
+              </Link>
+            )}
+            {user.role === 'mentee' && (
+              <Link to="/requests" className="requests-button">
+                내 요청
+              </Link>
+            )}
             <Link to="/edit-profile" className="edit-button">
               프로필 편집
             </Link>

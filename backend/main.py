@@ -77,6 +77,13 @@ class MentorListItem(BaseModel):
     role: str
     profile: MentorProfile
 
+# 아웃고잉 매칭 요청 응답 (message 필드 없음)
+class MatchRequestOutgoing(BaseModel):
+    id: int
+    mentorId: int
+    menteeId: int
+    status: str
+
 class UpdateProfileRequest(BaseModel):
     id: int
     name: str
@@ -740,7 +747,7 @@ async def get_mentors(
             mentors.sort(key=lambda x: x.id)
             logger.info("Sorted mentors by ID (default)")
         
-        # MentorListItem 형식으로 변환
+        # API 스펙에 맞는 형식으로 변환 (profile 객체 안에 name 포함)
         mentor_list = []
         for mentor in mentors:
             mentor_profile = MentorProfile(
@@ -749,7 +756,6 @@ async def get_mentors(
                 imageUrl=mentor.profile.imageUrl or f"/images/mentor/{mentor.id}",
                 skills=mentor.profile.skills or []
             )
-            
             mentor_item = MentorListItem(
                 id=mentor.id,
                 email=mentor.email,
@@ -863,6 +869,534 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "method": request.method
         }
     )
+
+
+# 매칭 요청 API 엔드포인트들
+@app.post("/api/match-requests", response_model=MatchRequestResponse)
+async def create_match_request_endpoint(
+    request_data: CreateMatchRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """매칭 요청 보내기 (멘티 전용)"""
+    try:
+        logger.info(f"🤝 MATCH REQUEST: Mentee {current_user.id} requesting mentor {request_data.mentorId}")
+        
+        # 멘티만 접근 가능
+        if current_user.role != "mentee":
+            logger.warning(f"Non-mentee user {current_user.id} tried to create match request")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only mentees can create match requests"
+            )
+        
+        # 멘토 존재 확인
+        mentor = get_user_by_id(request_data.mentorId)
+        if not mentor or mentor.role != "mentor":
+            logger.warning(f"Invalid mentor ID {request_data.mentorId} in match request")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Mentor not found"
+            )
+        
+        # 멘티 ID 확인 (요청한 사용자와 일치해야 함)
+        if request_data.menteeId != current_user.id:
+            logger.warning(f"Mentee ID mismatch: {request_data.menteeId} vs {current_user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Mentee ID must match current user"
+            )
+        
+        # 중복 요청 확인
+        existing_request = None
+        for req in match_requests_db:
+            if req.mentorId == request_data.mentorId and req.menteeId == current_user.id and req.status == "pending":
+                existing_request = req
+                break
+        
+        if existing_request:
+            logger.warning(f"Duplicate match request: mentee {current_user.id} -> mentor {request_data.mentorId}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Match request already exists"
+            )
+        
+        # 매칭 요청 생성
+        match_request = create_match_request(
+            mentor_id=request_data.mentorId,
+            mentee_id=current_user.id,
+            message=request_data.message
+        )
+        
+        logger.info(f"✅ MATCH REQUEST CREATED: ID {match_request.id}, Mentee {current_user.id} -> Mentor {request_data.mentorId}")
+        
+        response_data = MatchRequestResponse(
+            id=match_request.id,
+            mentorId=match_request.mentorId,
+            menteeId=match_request.menteeId,
+            message=match_request.message,
+            status=match_request.status
+        )
+        
+        return response_data
+        
+    except HTTPException as e:
+        logger.error(f"❌ MATCH REQUEST HTTP ERROR: {e.status_code} - {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"💥 MATCH REQUEST UNEXPECTED ERROR: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@app.get("/api/match-requests/incoming", response_model=List[MatchRequestResponse])
+async def get_incoming_match_requests(
+    current_user: User = Depends(get_current_user)
+):
+    """나에게 들어온 요청 목록 (멘토 전용)"""
+    try:
+        logger.info(f"📥 INCOMING REQUESTS: Mentor {current_user.id} checking incoming requests")
+        
+        # 멘토만 접근 가능
+        if current_user.role != "mentor":
+            logger.warning(f"Non-mentor user {current_user.id} tried to access incoming requests")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only mentors can access incoming match requests"
+            )
+        
+        # 해당 멘토에게 온 요청들 가져오기
+        incoming_requests = get_incoming_requests(current_user.id)
+        
+        logger.info(f"📤 INCOMING REQUESTS RESPONSE: {len(incoming_requests)} requests for mentor {current_user.id}")
+        
+        response_data = [
+            MatchRequestResponse(
+                id=req.id,
+                mentorId=req.mentorId,
+                menteeId=req.menteeId,
+                message=req.message,
+                status=req.status
+            )
+            for req in incoming_requests
+        ]
+        
+        return response_data
+        
+    except HTTPException as e:
+        logger.error(f"❌ INCOMING REQUESTS HTTP ERROR: {e.status_code} - {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"💥 INCOMING REQUESTS UNEXPECTED ERROR: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@app.get("/api/match-requests/outgoing", response_model=List[MatchRequestOutgoing])
+async def get_outgoing_match_requests(
+    current_user: User = Depends(get_current_user)
+):
+    """내가 보낸 요청 목록 (멘티 전용)"""
+    try:
+        logger.info(f"📤 OUTGOING REQUESTS: Mentee {current_user.id} checking outgoing requests")
+        
+        # 멘티만 접근 가능
+        if current_user.role != "mentee":
+            logger.warning(f"Non-mentee user {current_user.id} tried to access outgoing requests")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only mentees can access outgoing match requests"
+            )
+        
+        # 해당 멘티가 보낸 요청들 가져오기
+        outgoing_requests = get_outgoing_requests(current_user.id)
+        
+        logger.info(f"📤 OUTGOING REQUESTS RESPONSE: {len(outgoing_requests)} requests from mentee {current_user.id}")
+        
+        # API 스펙에 맞는 형식으로 변환 (message 필드 제외)
+        response_data = [
+            MatchRequestOutgoing(
+                id=req.id,
+                mentorId=req.mentorId,
+                menteeId=req.menteeId,
+                status=req.status
+            )
+            for req in outgoing_requests
+        ]
+        
+        return response_data
+        
+    except HTTPException as e:
+        logger.error(f"❌ OUTGOING REQUESTS HTTP ERROR: {e.status_code} - {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"💥 OUTGOING REQUESTS UNEXPECTED ERROR: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@app.put("/api/match-requests/{request_id}/accept", response_model=MatchRequestResponse)
+async def accept_match_request(
+    request_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """요청 수락 (멘토 전용)"""
+    try:
+        logger.info(f"✅ ACCEPT REQUEST: Mentor {current_user.id} accepting request {request_id}")
+        
+        # 멘토만 접근 가능
+        if current_user.role != "mentor":
+            logger.warning(f"Non-mentor user {current_user.id} tried to accept match request")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only mentors can accept match requests"
+            )
+        
+        # 매칭 요청 찾기
+        match_request = get_match_request_by_id(request_id)
+        if not match_request:
+            logger.warning(f"Match request {request_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Match request not found"
+            )
+        
+        # 해당 멘토의 요청인지 확인
+        if match_request.mentorId != current_user.id:
+            logger.warning(f"Mentor {current_user.id} tried to accept request {request_id} for mentor {match_request.mentorId}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Can only accept your own match requests"
+            )
+        
+        # 이미 처리된 요청인지 확인
+        if match_request.status != "pending":
+            logger.warning(f"Match request {request_id} already processed: {match_request.status}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Match request already {match_request.status}"
+            )
+        
+        # 요청 수락
+        match_request.status = "accepted"
+        
+        logger.info(f"✅ REQUEST ACCEPTED: Request {request_id} accepted by mentor {current_user.id}")
+        
+        response_data = MatchRequestResponse(
+            id=match_request.id,
+            mentorId=match_request.mentorId,
+            menteeId=match_request.menteeId,
+            message=match_request.message,
+            status=match_request.status
+        )
+        
+        return response_data
+        
+    except HTTPException as e:
+        logger.error(f"❌ ACCEPT REQUEST HTTP ERROR: {e.status_code} - {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"💥 ACCEPT REQUEST UNEXPECTED ERROR: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@app.put("/api/match-requests/{request_id}/reject", response_model=MatchRequestResponse)
+async def reject_match_request(
+    request_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """요청 거절 (멘토 전용)"""
+    try:
+        logger.info(f"❌ REJECT REQUEST: Mentor {current_user.id} rejecting request {request_id}")
+        
+        # 멘토만 접근 가능
+        if current_user.role != "mentor":
+            logger.warning(f"Non-mentor user {current_user.id} tried to reject match request")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only mentors can reject match requests"
+            )
+        
+        # 매칭 요청 찾기
+        match_request = get_match_request_by_id(request_id)
+        if not match_request:
+            logger.warning(f"Match request {request_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Match request not found"
+            )
+        
+        # 해당 멘토의 요청인지 확인
+        if match_request.mentorId != current_user.id:
+            logger.warning(f"Mentor {current_user.id} tried to reject request {request_id} for mentor {match_request.mentorId}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Can only reject your own match requests"
+            )
+        
+        # 이미 처리된 요청인지 확인
+        if match_request.status != "pending":
+            logger.warning(f"Match request {request_id} already processed: {match_request.status}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Match request already {match_request.status}"
+            )
+        
+        # 요청 거절
+        match_request.status = "rejected"
+        
+        logger.info(f"❌ REQUEST REJECTED: Request {request_id} rejected by mentor {current_user.id}")
+        
+        response_data = MatchRequestResponse(
+            id=match_request.id,
+            mentorId=match_request.mentorId,
+            menteeId=match_request.menteeId,
+            message=match_request.message,
+            status=match_request.status
+        )
+        
+        return response_data
+        
+    except HTTPException as e:
+        logger.error(f"❌ REJECT REQUEST HTTP ERROR: {e.status_code} - {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"💥 REJECT REQUEST UNEXPECTED ERROR: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@app.delete("/api/match-requests/{request_id}", response_model=MatchRequestResponse)
+async def cancel_match_request(
+    request_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """요청 삭제/취소 (멘티 전용)"""
+    try:
+        logger.info(f"🗑️ CANCEL REQUEST: Mentee {current_user.id} cancelling request {request_id}")
+        
+        # 멘티만 접근 가능
+        if current_user.role != "mentee":
+            logger.warning(f"Non-mentee user {current_user.id} tried to cancel match request")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only mentees can cancel match requests"
+            )
+        
+        # 매칭 요청 찾기
+        match_request = get_match_request_by_id(request_id)
+        if not match_request:
+            logger.warning(f"Match request {request_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Match request not found"
+            )
+        
+        # 해당 멘티의 요청인지 확인
+        if match_request.menteeId != current_user.id:
+            logger.warning(f"Mentee {current_user.id} tried to cancel request {request_id} from mentee {match_request.menteeId}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Can only cancel your own match requests"
+            )
+        
+        # 이미 수락된 요청은 취소할 수 없음
+        if match_request.status == "accepted":
+            logger.warning(f"Cannot cancel accepted match request {request_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot cancel accepted match request"
+            )
+        
+        # 요청 취소
+        match_request.status = "cancelled"
+        
+        logger.info(f"🗑️ REQUEST CANCELLED: Request {request_id} cancelled by mentee {current_user.id}")
+        
+        response_data = MatchRequestResponse(
+            id=match_request.id,
+            mentorId=match_request.mentorId,
+            menteeId=match_request.menteeId,
+            message=match_request.message,
+            status=match_request.status
+        )
+        
+        return response_data
+        
+    except HTTPException as e:
+        logger.error(f"❌ CANCEL REQUEST HTTP ERROR: {e.status_code} - {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"💥 CANCEL REQUEST UNEXPECTED ERROR: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@app.post("/test/match-requests", tags=["test"])
+async def create_test_match_requests():
+    """매칭 요청 테스트 데이터 생성"""
+    try:
+        logger.info("🔧 Creating test match requests...")
+        
+        # 기존 매칭 요청 데이터 삭제
+        global match_requests_db
+        match_requests_db.clear()
+        
+        # 멘토와 멘티 ID 찾기
+        mentors = [user for user in users_db if user.role == "mentor"]
+        mentees = [user for user in users_db if user.role == "mentee"]
+        
+        if len(mentors) == 0 or len(mentees) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No mentors or mentees available. Please create test users first."
+            )
+        
+        # 테스트 매칭 요청 메시지들
+        test_messages = [
+            {
+                "message": """안녕하세요! 개발 공부를 시작한 지 얼마 되지 않은 초보 개발자입니다. 
+기본기를 탄탄히 다지고 실무 경험을 쌓고 싶어서 멘토링을 신청드립니다.
+
+현재 상황:
+- 프로그래밍 기초 문법 학습 중
+- 간단한 토이 프로젝트 경험 있음
+- 체계적인 학습 방향 고민 중
+
+도움 받고 싶은 부분:
+- 학습 로드맵 설계
+- 코드 리뷰 및 피드백
+- 실무에서 필요한 기술 스택 조언
+
+열정적으로 배우겠습니다. 감사합니다!""",
+                "status": "pending"
+            },
+            {
+                "message": """안녕하세요! 개발 경험이 어느 정도 있는 중급 개발자입니다.
+더 나은 개발자로 성장하기 위해 멘토링을 요청드립니다.
+
+현재 상황:
+- 개발 경력 1-2년 또는 중급 수준
+- 기본적인 프로젝트 개발 경험 보유
+- 더 깊이 있는 기술 습득 희망
+
+도움 받고 싶은 부분:
+- 아키텍처 설계 및 베스트 프랙티스
+- 코드 품질 향상 방법
+- 실무 프로젝트에서의 문제 해결 접근법
+- 커리어 발전 방향 조언
+
+함께 성장할 수 있기를 기대합니다!""",
+                "status": "accepted"
+            },
+            {
+                "message": """안녕하세요! 개발자로서 커리어 전환을 준비하고 있습니다.
+실무 진입을 위한 구체적인 가이드가 필요하여 멘토링을 신청합니다.
+
+현재 상황:
+- 개발 공부 중 (부트캠프/독학)
+- 포트폴리오 프로젝트 준비 중
+- 취업 준비 단계
+
+도움 받고 싶은 부분:
+- 포트폴리오 프로젝트 방향성
+- 이력서 및 기술 면접 준비
+- 실무에서 요구하는 기술 수준
+- 개발자 취업 시장 이해
+
+실무 경험을 바탕으로 한 조언 부탁드립니다!""",
+                "status": "rejected"
+            },
+            {
+                "message": """안녕하세요! 현재 진행 중인 프로젝트에서 막히는 부분이 있어 도움을 요청드립니다.
+
+프로젝트 개요:
+- 웹/앱 개발 프로젝트 진행 중
+- 특정 기술 스택 사용 중
+- 팀 프로젝트 또는 개인 프로젝트
+
+현재 어려움:
+- 기술적 이슈 해결
+- 설계 방향성 결정
+- 성능 최적화 방법
+
+기대하는 도움:
+- 문제 해결 방법론
+- 코드 리뷰 및 개선 방향
+- 프로젝트 완성도 향상
+
+구체적인 조언 부탁드립니다!""",
+                "status": "pending"
+            },
+            {
+                "message": "안녕하세요! 개발 분야에서 성장하고 싶어 멘토링을 신청합니다. 실무 경험을 바탕으로 한 조언 부탁드립니다.",
+                "status": "pending"
+            }
+        ]
+        
+        # 매칭 요청 생성
+        request_id = 1
+        for i, mentee in enumerate(mentees):
+            for j, mentor in enumerate(mentors[:3]):  # 각 멘티당 최대 3개 멘토에게 요청
+                if i < len(test_messages):
+                    message_data = test_messages[i]
+                else:
+                    message_data = test_messages[0]  # 기본 메시지 사용
+                
+                match_request = MatchRequest(
+                    id=request_id,
+                    mentorId=mentor.id,
+                    menteeId=mentee.id,
+                    message=message_data["message"],
+                    status=message_data["status"]
+                )
+                
+                match_requests_db.append(match_request)
+                logger.info(f"Created match request {request_id}: mentee {mentee.profile.name} -> mentor {mentor.profile.name} ({message_data['status']})")
+                request_id += 1
+                
+                # 다양한 상태의 요청을 위해 순환
+                if j == 1:  # 두 번째 멘토에게는 accepted 상태로
+                    if len(test_messages) > 1:
+                        message_data = test_messages[1]
+                elif j == 2:  # 세 번째 멘토에게는 rejected 상태로
+                    if len(test_messages) > 2:
+                        message_data = test_messages[2]
+        
+        created_count = len(match_requests_db)
+        logger.info(f"✅ Test match requests created successfully. Total: {created_count}")
+        
+        return {
+            "message": f"Successfully created {created_count} test match requests",
+            "total_requests": created_count,
+            "by_status": {
+                "pending": len([req for req in match_requests_db if req.status == "pending"]),
+                "accepted": len([req for req in match_requests_db if req.status == "accepted"]),
+                "rejected": len([req for req in match_requests_db if req.status == "rejected"])
+            }
+        }
+        
+    except HTTPException as e:
+        logger.error(f"❌ CREATE TEST MATCH REQUESTS HTTP ERROR: {e.status_code} - {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"💥 CREATE TEST MATCH REQUESTS UNEXPECTED ERROR: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
 
 
 if __name__ == "__main__":

@@ -4,8 +4,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Profile from './pages/Profile';
-import EditProfile from './pages/EditProfile';
 import MentorList from './pages/MentorList';
+import MatchRequests from './pages/MatchRequests';
 import ProtectedRoute from './components/ProtectedRoute';
 import './App.css';
 
@@ -31,7 +31,7 @@ const Home = () => {
 
   console.log('Home - isAuthenticated:', isAuthenticated, 'user:', user);
   
-  return isAuthenticated ? <Navigate to="/profile" replace /> : <Navigate to="/login" replace />;
+  return isAuthenticated ? <Navigate to="/profile" /> : <Navigate to="/login" />;
 };
 
 function App() {
@@ -51,19 +51,20 @@ function App() {
                 </ProtectedRoute>
               } 
             />
-            <Route 
-              path="/edit-profile" 
-              element={
-                <ProtectedRoute>
-                  <EditProfile />
-                </ProtectedRoute>
-              } 
-            />
+
             <Route 
               path="/mentors" 
               element={
                 <ProtectedRoute>
                   <MentorList />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/requests" 
+              element={
+                <ProtectedRoute>
+                  <MatchRequests />
                 </ProtectedRoute>
               } 
             />
