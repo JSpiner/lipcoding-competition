@@ -1,13 +1,13 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi import FastAPI, HTTPException, Depends, status, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from typing import Optional, List, Union
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, EmailStr
 import json
 import os
 import base64
@@ -196,46 +196,35 @@ def get_outgoing_requests(mentee_id: int) -> List[MatchRequest]:
     return [req for req in match_requests_db if req.menteeId == mentee_id]
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> User:
-    """JWT 토큰으로 현재 사용자를 가져오는 함수"""
     try:
-        token = credentials.credentials
-        logger.info(f"🔑 JWT AUTH: Validating token...")
-        
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: int = payload.get("user_id")
-        user_email: str = payload.get("sub")
-        user_role: str = payload.get("role")
-        
-        logger.info(f"🔓 JWT PAYLOAD: user_id={user_id}, email={user_email}, role={user_role}")
-        
-        if user_id is None:
-            logger.warning("❌ JWT ERROR: user_id not found in token")
+        if not credentials or not credentials.credentials:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials"
+                detail="Missing Authorization header"
             )
-        
+        token = credentials.credentials
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
         user = get_user_by_id(user_id)
         if user is None:
-            logger.warning(f"❌ JWT ERROR: User {user_id} not found in database")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found"
             )
-        
-        logger.info(f"✅ JWT SUCCESS: Authenticated user {user.id} ({user.email})")
         return user
-        
     except JWTError as e:
-        logger.warning(f"❌ JWT ERROR: Invalid token - {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials"
+            detail="Invalid token"
         )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"💥 JWT UNEXPECTED ERROR: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed"
@@ -452,8 +441,8 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
-    return {"message": "Mentor-Mentee API is running!"}
+    """Swagger UI로 리다이렉트"""
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")
@@ -501,44 +490,30 @@ async def debug_users():
 
 # API 엔드포인트들
 @app.post("/api/signup", status_code=status.HTTP_201_CREATED)
-async def signup(signup_data: SignupRequest):
+async def signup(signup_data: SignupRequest = Body(...)):
     """회원가입"""
     request_start = datetime.utcnow()
     try:
-        logger.info(f"🔐 SIGNUP START: {signup_data.email} as {signup_data.role}")
-        
-        # 이메일 중복 체크
-        if get_user_by_email(signup_data.email):
-            logger.warning(f"❌ SIGNUP FAILED: Email {signup_data.email} already exists")
+        # 이메일 형식 체크 및 필수 필드 체크
+        if not signup_data.email or not signup_data.password or not signup_data.name or not signup_data.role:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
+                detail="Missing required fields"
             )
-        
-        # role 유효성 검사
+        try:
+            EmailStr.validate(signup_data.email)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email format"
+            )
         if signup_data.role not in ["mentor", "mentee"]:
-            logger.warning(f"❌ SIGNUP FAILED: Invalid role {signup_data.role}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Role must be either 'mentor' or 'mentee'"
+                detail="Invalid role"
             )
-        
-        # 패스워드 해싱 시작 로깅
-        hash_start = datetime.utcnow()
-        logger.info(f"🔒 HASHING PASSWORD...")
-        
-        # 사용자 생성
-        user = create_user(signup_data)
-        
-        hash_time = (datetime.utcnow() - hash_start).total_seconds()
-        total_time = (datetime.utcnow() - request_start).total_seconds()
-        
-        logger.info(f"✅ SIGNUP SUCCESS: User {user.id} created in {total_time:.3f}s (hash: {hash_time:.3f}s)")
-        
-        # 성공 응답
-        response_data = {"message": "User created successfully"}
+        response_data = create_user_response(create_user(signup_data))
         return response_data
-        
     except HTTPException as e:
         total_time = (datetime.utcnow() - request_start).total_seconds()
         logger.error(f"❌ SIGNUP HTTP ERROR ({total_time:.3f}s): {e.status_code} - {e.detail}")
@@ -553,33 +528,33 @@ async def signup(signup_data: SignupRequest):
 
 
 @app.post("/api/login", response_model=LoginResponse)
-async def login(login_data: LoginRequest):
+async def login(login_data: LoginRequest = Body(...)):
     """로그인"""
     try:
         logger.info(f"🔐 LOGIN ATTEMPT: {login_data.email}")
-        
+        # 필수 필드 체크
+        if not login_data.email or not login_data.password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required fields"
+            )
         # 사용자 인증
         user = authenticate_user(login_data.email, login_data.password)
         if not user:
-            logger.warning(f"❌ LOGIN FAILED: Invalid credentials for {login_data.email}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password"
+                detail="Invalid email or password"
             )
-        
         # JWT 토큰 생성
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
             data={"sub": user.email, "user_id": user.id, "role": user.role}, 
             expires_delta=access_token_expires
         )
-        
         logger.info(f"✅ LOGIN SUCCESS: User {user.id} ({user.email}) as {user.role}")
-        
         response_data = LoginResponse(token=access_token)
         logger.info(f"📤 LOGIN RESPONSE: Token generated for user {user.id}")
         return response_data
-        
     except HTTPException as e:
         logger.error(f"❌ LOGIN HTTP ERROR: {e.status_code} - {e.detail}")
         raise
@@ -873,77 +848,42 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # 매칭 요청 API 엔드포인트들
 @app.post("/api/match-requests", response_model=MatchRequestResponse)
-async def create_match_request_endpoint(
-    request_data: CreateMatchRequest,
+async def create_match_request_api(
+    match_data: CreateMatchRequest = Body(...),
     current_user: User = Depends(get_current_user)
 ):
-    """매칭 요청 보내기 (멘티 전용)"""
     try:
-        logger.info(f"🤝 MATCH REQUEST: Mentee {current_user.id} requesting mentor {request_data.mentorId}")
-        
-        # 멘티만 접근 가능
+        # 멘티만 요청 가능
         if current_user.role != "mentee":
-            logger.warning(f"Non-mentee user {current_user.id} tried to create match request")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only mentees can create match requests"
+                detail="Only mentees can send match requests"
             )
-        
-        # 멘토 존재 확인
-        mentor = get_user_by_id(request_data.mentorId)
+        # 필수 필드 체크
+        if not match_data.mentorId or not match_data.menteeId or not match_data.message:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required fields"
+            )
+        # 멘토 존재 여부 체크
+        mentor = get_user_by_id(match_data.mentorId)
         if not mentor or mentor.role != "mentor":
-            logger.warning(f"Invalid mentor ID {request_data.mentorId} in match request")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Mentor not found"
             )
-        
-        # 멘티 ID 확인 (요청한 사용자와 일치해야 함)
-        if request_data.menteeId != current_user.id:
-            logger.warning(f"Mentee ID mismatch: {request_data.menteeId} vs {current_user.id}")
+        # 본인(멘티) ID와 일치하는지 체크
+        if match_data.menteeId != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Mentee ID must match current user"
+                detail="Mentee ID mismatch"
             )
-        
-        # 중복 요청 확인
-        existing_request = None
-        for req in match_requests_db:
-            if req.mentorId == request_data.mentorId and req.menteeId == current_user.id and req.status == "pending":
-                existing_request = req
-                break
-        
-        if existing_request:
-            logger.warning(f"Duplicate match request: mentee {current_user.id} -> mentor {request_data.mentorId}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Match request already exists"
-            )
-        
-        # 매칭 요청 생성
-        match_request = create_match_request(
-            mentor_id=request_data.mentorId,
-            mentee_id=current_user.id,
-            message=request_data.message
-        )
-        
-        logger.info(f"✅ MATCH REQUEST CREATED: ID {match_request.id}, Mentee {current_user.id} -> Mentor {request_data.mentorId}")
-        
-        response_data = MatchRequestResponse(
-            id=match_request.id,
-            mentorId=match_request.mentorId,
-            menteeId=match_request.menteeId,
-            message=match_request.message,
-            status=match_request.status
-        )
-        
-        return response_data
-        
-    except HTTPException as e:
-        logger.error(f"❌ MATCH REQUEST HTTP ERROR: {e.status_code} - {e.detail}")
+        match_request = create_match_request(match_data.mentorId, match_data.menteeId, match_data.message)
+        return MatchRequestResponse(**match_request.dict())
+    except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"💥 MATCH REQUEST UNEXPECTED ERROR: {str(e)}")
+        logger.error(f"Error in create_match_request: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"

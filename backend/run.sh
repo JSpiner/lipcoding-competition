@@ -1,4 +1,5 @@
 #!/bin/bash
+# nohup ./run.sh > run.log 2>&1 &
 
 # Backend 실행 스크립트 - 8080포트
 # 사용법: ./run.sh

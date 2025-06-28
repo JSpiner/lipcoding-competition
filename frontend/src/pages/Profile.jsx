@@ -73,7 +73,7 @@ const Profile = () => {
                 내 요청
               </Link>
             )}
-            <Link to="/edit-profile" className="edit-button">
+            <Link to="/profile" className="edit-button">
               프로필 편집
             </Link>
             <button onClick={handleLogout} className="logout-button">
@@ -142,7 +142,7 @@ const Profile = () => {
                 <strong>프로필을 완성해주세요!</strong><br />
                 프로필 정보를 입력하면 더 나은 매칭을 받을 수 있습니다.
               </p>
-              <Link to="/edit-profile" className="setup-button">
+              <Link to="/profile" className="setup-button">
                 지금 설정하기
               </Link>
             </div>

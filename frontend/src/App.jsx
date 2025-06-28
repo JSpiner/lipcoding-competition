@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Profile from './pages/Profile';
+import EditProfile from './pages/EditProfile';
 import MentorList from './pages/MentorList';
 import MatchRequests from './pages/MatchRequests';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -31,7 +32,7 @@ const Home = () => {
 
   console.log('Home - isAuthenticated:', isAuthenticated, 'user:', user);
   
-  return isAuthenticated ? <Navigate to="/profile" /> : <Navigate to="/login" />;
+  return isAuthenticated ? <Navigate to="/" /> : <Navigate to="/login" />;
 };
 
 function App() {
@@ -41,13 +42,14 @@ function App() {
         <div className="App">
           <Routes>
             <Route path="/" element={<Home />} />
+            <Route path="/home" element={<Profile />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
             <Route 
               path="/profile" 
               element={
                 <ProtectedRoute>
-                  <Profile />
+                  <EditProfile />
                 </ProtectedRoute>
               } 
             />
