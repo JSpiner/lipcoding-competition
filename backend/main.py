@@ -831,15 +831,14 @@ async def get_profile_image(
 # 422 에러 핸들러 추가
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """422 Validation Error 핸들러"""
+    """422 Validation Error 핸들러 → 400 Bad Request로 변경"""
     logger.error(f"Validation error on {request.url}: {exc.errors()}")
     logger.error("Request body reading skipped to avoid timeout issues")
-    
     return JSONResponse(
-        status_code=422,
+        status_code=400,  # 422 → 400
         content={
             "detail": exc.errors(),
-            "message": "Request validation failed",
+            "message": "Bad request: Request validation failed",
             "url": str(request.url),
             "method": request.method
         }
