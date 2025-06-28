@@ -12,6 +12,7 @@ import json
 import os
 import base64
 import logging
+import traceback
 
 # 로깅 설정
 logging.basicConfig(
@@ -500,9 +501,10 @@ async def signup(signup_data: SignupRequest = Body(...)):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Missing required fields"
             )
-        try:
-            EmailStr.validate(signup_data.email)
-        except Exception:
+        # 이메일 형식 검증
+        import re
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, signup_data.email):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid email format"
