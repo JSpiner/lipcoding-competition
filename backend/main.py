@@ -33,7 +33,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Password hashing - rounds를 낮춰서 성능 향상
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=10)
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 # Pydantic 모델들
 class SignupRequest(BaseModel):
@@ -198,37 +198,51 @@ def get_outgoing_requests(mentee_id: int) -> List[MatchRequest]:
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> User:
     try:
-        if not credentials or not credentials.credentials:
+        # Authorization 헤더가 없거나 토큰이 없는 경우
+        if not credentials:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing Authorization header"
+                detail="Authorization header required",
+                headers={"WWW-Authenticate": "Bearer"}
             )
+        
+        if not credentials.credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token required",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        
         token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("user_id")
         if user_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"}
             )
         user = get_user_by_id(user_id)
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found"
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"}
             )
         return user
     except JWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"}
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed"
+            detail="Authentication failed",
+            headers={"WWW-Authenticate": "Bearer"}
         )
 
 def create_user_response(user: User) -> UserResponse:
@@ -501,6 +515,15 @@ async def signup(signup_data: SignupRequest = Body(...)):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Missing required fields"
             )
+        
+        # 중복 이메일 체크
+        existing_user = get_user_by_email(signup_data.email)
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already exists"
+            )
+        
         # 이메일 형식 검증
         import re
         email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
@@ -537,7 +560,7 @@ async def login(login_data: LoginRequest = Body(...)):
         # 필수 필드 체크
         if not login_data.email or not login_data.password:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing required fields"
             )
         # 사용자 인증
