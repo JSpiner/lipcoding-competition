@@ -22,7 +22,7 @@ fi
 
 # 의존성 설치 확인
 echo "📋 Checking dependencies..."
-pip install -r requirements.txt --quiet
+pip install -r requirements.txt
 
 # FastAPI 서버 시작 (8080포트)
 echo "🌐 Starting FastAPI server on port 8080..."

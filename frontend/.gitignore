@@ -1,4 +1,10 @@
-# Logs
+# ================================
+# React + Vite 프론트엔드 .gitignore
+# ================================
+
+# ================================
+# 📝 로그 및 디버그
+# ================================
 logs
 *.log
 npm-debug.log*
@@ -7,18 +13,91 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# ================================
+# 📦 의존성
+# ================================
 node_modules
+.pnp.*
+.yarn-integrity
+
+# ================================
+# 🏗️ 빌드 및 배포
+# ================================
 dist
 dist-ssr
-*.local
+build
+.vite/
+.vercel/
+.netlify/
 
-# Editor directories and files
+# ================================
+# 🔐 환경 변수
+# ================================
+*.local
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ================================
+# 🧪 테스트 및 커버리지
+# ================================
+coverage/
+.nyc_output/
+.jest/
+
+# ================================
+# 🔧 개발 도구 및 에디터
+# ================================
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
 .idea
+.eslintcache
+.stylelintcache
+
+# ================================
+# 💻 운영체제
+# ================================
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+Thumbs.db
+
+# ================================
+# 🔄 캐시
+# ================================
+.cache/
+.parcel-cache/
+.swc/
+
+# ================================
+# 🎨 에셋 처리
+# ================================
+# 임시 이미지 처리 파일
+.image-cache/
+temp-uploads/
+uploads/temp/
+
+# ================================
+# 🎯 프로젝트별
+# ================================
+# Storybook
+storybook-static/
+
+# TypeScript
+*.tsbuildinfo
+
+# 백업 파일
+src/**/*.backup.*
+public/**/*.backup.*
+
+# API 키 및 민감 정보
+config/secrets.json
+src/config/keys.js
