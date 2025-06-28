@@ -556,6 +556,7 @@ async def signup(signup_data: SignupRequest = Body(...)):
 async def login(login_data: LoginRequest = Body(...)):
     """로그인"""
     try:
+        print("in login")
         logger.info(f"🔐 LOGIN ATTEMPT: {login_data.email}")
         # 필수 필드 체크
         if not login_data.email or not login_data.password:
@@ -856,9 +857,23 @@ async def get_profile_image(
 # 422 에러 핸들러 추가
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """422 Validation Error 핸들러 → 400 Bad Request로 변경"""
+    """422 Validation Error 핸들러 → 400 또는 401 Bad Request로 변경"""
     logger.error(f"Validation error on {request.url}: {exc.errors()}")
     logger.error("Request body reading skipped to avoid timeout issues")
+    
+    # login API에서는 401 에러로 처리
+    if str(request.url).endswith("/api/login"):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": "Missing required fields",
+                "message": "Authentication failed",
+                "url": str(request.url),
+                "method": request.method
+            }
+        )
+    
+    # 다른 API에서는 400 에러로 처리
     return JSONResponse(
         status_code=400,  # 422 → 400
         content={
